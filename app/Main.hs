@@ -390,6 +390,7 @@ prove c t = \case
     --
     pure (Equal t0 a1 b1 :==: Equal t0 a2 b2)
   SuccCong g -> do
+    -- E-SuccCong
     a :==: b <- prove c t g
     infer c t a .= NN
     --
@@ -484,7 +485,7 @@ reduceC1 c t = \case
     let g = Reflex bB1 :: Coercion
     -- because reduction is confluent and preserves
     -- Reflex bB0 : bB0 :==: bB0 ~> Reflex bB1 : bB1 :==: bB1.
-    prove c t g .= bB1 :==: bB0
+    prove (c ~) t g .= bB1 :==: bB0
     pure (IndN x aA b1 a2 y a3 :> g)
   p -> pure p
 
