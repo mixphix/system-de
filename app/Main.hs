@@ -1,6 +1,6 @@
-{-~ OPTIONS_GHC -Wno-unrecognised-pragmas ~-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
-{-~ HLINT ignore "Redundant bracket" ~-}
+{-# HLINT ignore "Redundant bracket" #-}
 module Main where
 
 import Control.Applicative (Alternative (empty))
