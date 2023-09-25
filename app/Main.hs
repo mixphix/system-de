@@ -1,6 +1,6 @@
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-~ OPTIONS_GHC -Wno-unrecognised-pragmas ~-}
 
-{-# HLINT ignore "Redundant bracket" #-}
+{-~ HLINT ignore "Redundant bracket" ~-}
 module Main where
 
 import Control.Applicative (Alternative (empty))
@@ -31,20 +31,42 @@ data Var ty = Var
   deriving (Eq, Ord, Show)
 
 data Context
-  = C_
+  = C_ -- T-Empty
   | (:&) Context (Var Point)
   deriving (Eq, Ord, Show)
 
-(?) :: (Alternative m) => Context -> Text -> m (Var Point)
-context0 ? name = case context0 of
+-- read `Var x d0 aA <- name ∈ context` as `context |- x ::d0 aA`
+(∈) :: (Alternative m) => Text -> Context -> m (Var Point)
+name ∈ context0 = case context0 of
   C_ -> empty
   _ :& v@(Var x _ _) | x == name -> pure v
-  c :& _ -> c ? name
+  c :& _ -> name ∈ c
 
-infixl 7 -:
+(∉) :: (Alternative m) => Text -> Context -> m ()
+(∉) x = \case
+  C_ -> pure ()
+  c :& Var y _ _ -> guard (x /= y) *> x ∉ c
 
-(-:) :: (Eq x, MonadPlus m) => m x -> x -> m ()
-action -: x = guard . (x ==) =<< action
+resurrect :: Context -> Context
+resurrect = \case
+  C_ -> C_
+  c :& Var x (Mode _ t) a -> resurrect c :& Var x (Mode Relevant t) a
+
+(~) :: Context -> Context
+(~) = resurrect
+
+(+:) :: (MonadPlus m) => Context -> Var Point -> m Context
+c +: (Var x (Mode r t) a) = do
+  -- T-ConsTm
+  infer (c ~) t a .= Star
+  x ∉ c
+  --
+  pure (c :& Var x (Mode r t) a)
+
+infixl 7 .=
+
+(.=) :: (Eq x, MonadPlus m) => m x -> x -> m ()
+action .= x = guard . (x ==) =<< action
 
 infixl 9 :>
 
@@ -185,24 +207,7 @@ recoerce coercion with name = case coercion of
     do (y, recoerce g3 with name)
     do recoerce g4 with name
 
-(∉) :: Text -> Context -> Bool
-(∉) x = \case
-  C_ -> True
-  c :& Var y _ _ -> x /= y && x ∉ c
-
-(+:) :: (MonadPlus m) => Context -> Var Point -> m Context
-c +: (Var x (Mode r t) a) = do
-  -- T-ConsTm
-  infer (resurrect c) t a -: Star
-  guard (x ∉ c)
-  --
-  pure (c :& Var x (Mode r t) a)
-
-resurrect :: Context -> Context
-resurrect = \case
-  C_ -> C_
-  c :& Var x (Mode _ t) a -> resurrect c :& Var x (Mode Relevant t) a
-
+-- read `ty <- point` as `point :: ty`
 infer :: (MonadPlus m) => Context -> Termination -> Point -> m Point
 infer c t = \case
   Star -> case t of
@@ -211,22 +216,22 @@ infer c t = \case
     Program -> pure Star
   Point x -> do
     -- T-Var
-    (Var _ rt0 a) <- c ? x
+    Var _ rt0 a <- x ∈ c
     guard (rt0 <= Mode Relevant t)
     --
     pure a
   Pi (Var x (Mode _ t0) aA) b -> do
     -- T-Pi
-    infer c t aA -: Star
+    infer c t aA .= Star
     c' <- c +: Var x (Mode Relevant t0) aA
-    infer c' t b -: Star
+    infer c' t b .= Star
     --
     pure Star
   Abs xA b -> do
     -- T-Abs
     c' <- c +: xA
     bB <- infer c' t b
-    infer (resurrect c) t (Pi xA bB) -: Star
+    infer (c ~) t (Pi xA bB) .= Star
     --
     pure (Pi xA bB)
   App mode b a -> do
@@ -235,14 +240,14 @@ infer c t = \case
     case tyB of
       Pi (Var x m aA) bB -> do
         guard (m <= mode)
-        infer c t a -: aA
+        infer c t a .= aA
         --
         pure (repoint bB a x)
       _ -> empty
   Equal t0 a b -> do
     -- T-Eq
     aA <- infer c t0 a
-    infer c t0 b -: aA
+    infer c t0 b .= aA
     --
     pure Star
   Reify t0 g -> do
@@ -252,27 +257,27 @@ infer c t = \case
     pure (Equal t0 a b)
   a :> g -> do
     -- T-Conv
-    aA :==: bB <- prove (resurrect c) t g
-    infer c t a -: aA
+    aA :==: bB <- prove (c ~) t g
+    infer c t a .= aA
     --
     pure bB
   NN -> pure Star -- T-Nat
   Zero -> pure NN -- T-Zero
   Succ a -> do
     -- T-Succ
-    infer c t a -: NN
+    infer c t a .= NN
     --
     pure NN
   IndN x aA a1 a2 y a3 -> do
     -- T-Ind
     let x_ ^: n = Var x_ RL n
-    infer (resurrect c) Logical (Pi (x ^: NN) aA) -: Star
-    infer c Logical a1 -: NN
-    infer c Logical a2 -: repoint aA Zero x
+    infer (c ~) Logical (Pi (x ^: NN) aA) .= Star
+    infer c Logical a1 .= NN
+    infer c Logical a2 .= repoint aA Zero x
     c' <- c +: Var y RL NN
     let ayx = repoint aA (Point y) x
         asyx = repoint aA (Succ $ Point y) x
-    infer c' Logical a3 -: Pi (x ^: ayx) asyx
+    infer c' Logical a3 .= Pi (x ^: ayx) asyx
     --
     pure (repoint aA a1 x)
   Ind{} -> empty
@@ -289,7 +294,7 @@ prove c t = \case
     guard (t0 <= t)
     void (infer c Logical a0)
     aA <- infer c t a
-    infer c t b -: aA
+    infer c t b .= aA
     --
     pure (a :==: b)
   Reflect{} -> empty
@@ -307,14 +312,14 @@ prove c t = \case
     a1 :==: a2 <- prove c t g1
     c' <- c +: (Var x (Mode Relevant t0) a1)
     b1 :==: b2 <- prove c' t g2
-    infer c t (Pi (Var x (Mode r0 t0) a1) b1) -: Star
-    infer c t (Pi (Var x (Mode r0 t0) a1) b2) -: Star
+    infer c t (Pi (Var x (Mode r0 t0) a1) b1) .= Star
+    infer c t (Pi (Var x (Mode r0 t0) a1) b2) .= Star
     let b3 = repoint b2 (Point x :> Sym g1) x
     --
     pure (Pi (Var x (Mode r0 t0) a1) b1 :==: Pi (Var x (Mode r0 t0) a2) b3)
   AbsCong l@(Var _ (Mode _ t0) aA) g -> do
     -- E-AbsCong
-    infer (resurrect c) t0 aA -: Star
+    infer (c ~) t0 aA .= Star
     c' <- c +: l
     a1 :==: a2 <- prove c' t g
     _b <- infer c t (Abs l a2)
@@ -324,31 +329,31 @@ prove c t = \case
     -- E-AppCong
     a1 :==: a2 <- prove c t g1
     b1 :==: b2 <- prove c t g2
-    a :==: b <- prove (resurrect c) t g
-    infer c t (App (Mode Relevant t) a1 b1) -: a
-    infer c t (App (Mode Relevant t) a2 b2) -: b
+    a :==: b <- prove (c ~) t g
+    infer c t (App (Mode Relevant t) a1 b1) .= a
+    infer c t (App (Mode Relevant t) a2 b2) .= b
     --
     pure ((App (Mode Relevant t) a1 b1 :> g) :==: App (Mode Relevant t) a2 b2)
   AppCongIrrel g1 b1 b2 g -> do
     -- E-AppCongIrrel
-    let rc = resurrect c
+    let c' = resurrect c
         a @ b = App (Mode Irrelevant t) a b
     a1 :==: a2 <- prove c t g1
-    aA <- infer rc t b1
-    infer rc t b2 -: aA
-    bB1 :==: bB2 <- prove rc t g
-    infer c t (a1 @ b1) -: bB1
-    infer c t (a2 @ b2) -: bB2
+    aA <- infer c' t b1
+    infer c' t b2 .= aA
+    bB1 :==: bB2 <- prove c' t g
+    infer c t (a1 @ b1) .= bB1
+    infer c t (a2 @ b2) .= bB2
     --
     pure (a1 @ b1 :> g :==: a2 @ b2)
   Reduction a b -> do
     -- E-Red
-    primitiveReduction c t a -: b
+    reducePrim c t a .= b
     pure (a :==: b)
   ReifyCong t0 g1 g2 -> do
     -- E-ReifyCong
     p <- prove c t0 g1
-    prove c t0 g2 -: p
+    prove c t0 g2 .= p
     --
     pure (Reify t0 g1 :==: Reify t0 g2)
   Pifst t0 g -> do
@@ -365,8 +370,8 @@ prove c t = \case
     prove c t0 g >>= \case
       Pi (Var x1 (Mode _ t1) aA1) bB1 :==: Pi (Var x2 _ aA2) bB2 -> do
         a1 :==: a2 <- prove c t1 g1
-        infer c t1 a2 -: aA2
-        prove c t1 g2 -: aA2 :==: aA1
+        infer c t1 a2 .= aA2
+        prove c t1 g2 .= aA2 :==: aA1
         --
         pure (repoint bB1 (a1 :> g2) x1 :==: repoint bB2 a2 x2)
       _ -> empty
@@ -374,65 +379,63 @@ prove c t = \case
     -- E-ConvCong
     a1 :==: a2 <- prove c t g
     a1A <- infer c t (a1 :> g1)
-    infer c t (a2 :> g2) -: a1A
+    infer c t (a2 :> g2) .= a1A
     --
     pure (a1 :> g1 :==: a2 :> g2)
   EqualCong t0 g1 g2 -> do
     -- E-EqCong
     a1 :==: a2 <- prove c t0 g1
     b1 :==: b2 <- prove c t0 g2
-    infer c t (Equal t0 a1 b1) -: Star
+    infer c t (Equal t0 a1 b1) .= Star
     --
     pure (Equal t0 a1 b1 :==: Equal t0 a2 b2)
   SuccCong g -> do
     a :==: b <- prove c t g
-    infer c t a -: NN
+    infer c t a .= NN
     --
     pure (Succ a :==: Succ b)
   IndNCong x aA g1 g2 y g3 g -> do
     -- E-IndCong
-    infer (resurrect c) Logical (Pi (Var x RL NN) aA) -: Star
+    infer (c ~) Logical (Pi (Var x RL NN) aA) .= Star
     a1 :==: b1 <- prove c Logical g1
     a2 :==: b2 <- prove c Logical g2
     c' <- c +: Var y RL NN
     a3 :==: b3 <- prove c' Logical g3
     a0 <- infer c t (IndN x aA a1 a2 y a3)
     b0 <- infer c t (IndN x aA b1 b2 y b3)
-    prove c t g -: a0 :==: b0
+    prove c t g .= a0 :==: b0
     --
     pure (IndN x aA a1 a2 y a3 :> g :==: IndN x aA b1 b2 y b3)
   IndCong{} -> empty
 
-primitiveReduction ::
-  (MonadPlus m) => Context -> Termination -> Point -> m Point
-primitiveReduction c t p =
-  infer c t p >> case p of
-    App mode (Abs (Var x m _) a) b
-      | mode == m ->
-          -- aBeta-AppAbs
-          pure (repoint a b x)
-    Abs l@(Var x (Mode _ t0) _) a1 :> g -> do
-      -- aBeta-AbsPush
-      guard (t0 <= t) <* infer c t (Abs l a1 :> g)
-      prove c t0 g >>= \case
-        Pi _ _ :==: Pi (Var y d2 aA2) _ -> do
-          let a2 = repoint a1 (Point x :> Sym (Pifst t0 g)) x
-          let g2 = Pisnd t0 g (Reflex (Point x)) (Sym (Pifst t0 g))
-          --
-          pure (Abs (Var y d2 aA2) (a2 :> g2))
-        _ -> empty
-    a :> g1 :> g2 -> pure (a :> (g1 ::: g2)) -- aBeta-Combine
-    a :> g -> do
-      -- aBeta-ConvRefl
-      aA1 :==: aA2 <- prove c t g
-      guard (aA1 == aA2)
-      --
-      pure a
-    IndN _ _ Zero a2 _ _ -> pure a2 -- aBeta-IndZero
-    IndN x aA (Succ a1) a2 y a3 ->
-      -- aBeta-IndSucc
-      pure (App RL (repoint a3 a1 y) (IndN x aA a1 a2 y a3))
-    _ -> empty
+reducePrim :: (MonadPlus m) => Context -> Termination -> Point -> m Point
+reducePrim c t = liftA2 (*>) (infer c t) \case
+  App mode (Abs (Var x m _) a) b
+    | mode == m ->
+        -- aBeta-AppAbs
+        pure (repoint a b x)
+  Abs l@(Var x (Mode _ t0) _) a1 :> g -> do
+    -- aBeta-AbsPush
+    guard (t0 <= t) <* infer c t (Abs l a1 :> g)
+    prove c t0 g >>= \case
+      Pi _ _ :==: Pi (Var y d2 aA2) _ -> do
+        let a2 = repoint a1 (Point x :> Sym (Pifst t0 g)) x
+        let g2 = Pisnd t0 g (Reflex (Point x)) (Sym (Pifst t0 g))
+        --
+        pure (Abs (Var y d2 aA2) (a2 :> g2))
+      _ -> empty
+  a :> g1 :> g2 -> pure (a :> (g1 ::: g2)) -- aBeta-Combine
+  a :> g -> do
+    -- aBeta-ConvRefl
+    aA1 :==: aA2 <- prove c t g
+    guard (aA1 == aA2)
+    --
+    pure a
+  IndN _ _ Zero a2 _ _ -> pure a2 -- aBeta-IndZero
+  IndN x aA (Succ a1) a2 y a3 ->
+    -- aBeta-IndSucc
+    pure (App RL (repoint a3 a1 y) (IndN x aA a1 a2 y a3))
+  _ -> empty
 
 value :: (MonadPlus m) => Point -> m ()
 value = \case
@@ -477,8 +480,12 @@ reduceC1 c t = \case
     b1 <- reduceC1 c Logical a1
     bB0 <- infer c t ind
     bB1 <- infer c t (IndN x aA b1 a2 y a3)
-    prove c t (Reflex bB1) -: bB1 :==: bB0
-    pure (IndN x aA b1 a2 y a3 :> Reflex bB1)
+    -- Proof introduction,
+    let g = Reflex bB1 :: Coercion
+    -- because reduction is confluent and preserves
+    -- Reflex bB0 : bB0 :==: bB0 ~> Reflex bB1 : bB1 :==: bB1.
+    prove c t g .= bB1 :==: bB0
+    pure (IndN x aA b1 a2 y a3 :> g)
   p -> pure p
 
 -- | Administrative reduction
@@ -489,8 +496,8 @@ reduceA1 c t = \case
   l@(Abs (Var x (Mode r0 t0) _) a1 :> g) -> do
     -- CR-AbsPush
     guard (t0 <= t)
-    void (infer c t l) -- -: A
-    prove (resurrect c) t0 g >>= \case
+    void (infer c t l) -- .= A
+    prove (c ~) t0 g >>= \case
       Pi _ _ :==: Pi (Var _ _ aA2) _ -> do
         let a2 = repoint a1 (Point x :> Sym (Pifst t0 g)) x
             g2 = Pisnd t0 g (Reflex (Point x)) (Sym (Pifst t0 g))
@@ -500,7 +507,7 @@ reduceA1 c t = \case
   a :> g1 :> g2 -> pure (a :> (g1 ::: g2)) -- CR-Combine
   a :> g
     -- CR-ConvRefl
-    | Just (aA :==: bA) <- prove (resurrect c) t g, aA == bA -> pure a
+    | Just (aA :==: bA) <- prove (c ~) t g, aA == bA -> pure a
     -- CR-ConvCong
     | Just b <- reduceA1 c t a -> pure (b :> g)
   Succ a1 -> Succ <$> reduceA1 c t a1 -- CR-Succ
