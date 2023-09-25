@@ -293,9 +293,10 @@ prove c t = \case
     --
     pure (a :==: b)
   Reflect{} -> empty
-  Reflex a -> infer c t a $> a :==: a
-  Sym g -> prove c t g <&> \(a :==: b) -> b :==: a
+  Reflex a -> infer c t a $> a :==: a -- E-Reflex
+  Sym g -> prove c t g <&> \(a :==: b) -> b :==: a -- E-Sym
   g1 ::: g2 -> do
+    -- E-Trans
     x :==: b1 <- prove c t g1
     b2 :==: y <- prove c t g2
     guard (b1 == b2)
@@ -341,14 +342,17 @@ prove c t = \case
     --
     pure (a1 @ b1 :> g :==: a2 @ b2)
   Reduction a b -> do
+    -- E-Red
     primitiveReduction c t a -: b
     pure (a :==: b)
   ReifyCong t0 g1 g2 -> do
+    -- E-ReifyCong
     p <- prove c t0 g1
     prove c t0 g2 -: p
     --
     pure (Reify t0 g1 :==: Reify t0 g2)
   Pifst t0 g -> do
+    -- E-PiFst
     prove c t0 g >>= \case
       Pi (Var _ (Mode _ th) a1) _ :==: Pi (Var _ _ a2) _ -> do
         guard (th <= t)
@@ -356,6 +360,7 @@ prove c t = \case
         pure (a1 :==: a2)
       _ -> empty
   Pisnd t0 g g1 g2 -> do
+    -- E-PiSnd
     guard (t0 <= t)
     prove c t0 g >>= \case
       Pi (Var x1 (Mode _ t1) aA1) bB1 :==: Pi (Var x2 _ aA2) bB2 -> do
@@ -366,12 +371,14 @@ prove c t = \case
         pure (repoint bB1 (a1 :> g2) x1 :==: repoint bB2 a2 x2)
       _ -> empty
   ConvCong g g1 g2 -> do
+    -- E-ConvCong
     a1 :==: a2 <- prove c t g
     a1A <- infer c t (a1 :> g1)
     infer c t (a2 :> g2) -: a1A
     --
     pure (a1 :> g1 :==: a2 :> g2)
   EqualCong t0 g1 g2 -> do
+    -- E-EqCong
     a1 :==: a2 <- prove c t0 g1
     b1 :==: b2 <- prove c t0 g2
     infer c t (Equal t0 a1 b1) -: Star
@@ -383,6 +390,7 @@ prove c t = \case
     --
     pure (Succ a :==: Succ b)
   IndNCong x aA g1 g2 y g3 g -> do
+    -- E-IndCong
     infer (resurrect c) Logical (Pi (Var x RL NN) aA) -: Star
     a1 :==: b1 <- prove c Logical g1
     a2 :==: b2 <- prove c Logical g2
@@ -401,9 +409,10 @@ primitiveReduction c t p =
   infer c t p >> case p of
     App mode (Abs (Var x m _) a) b
       | mode == m ->
-          -- aBeta
+          -- aBeta-AppAbs
           pure (repoint a b x)
     Abs l@(Var x (Mode _ t0) _) a1 :> g -> do
+      -- aBeta-AbsPush
       guard (t0 <= t) <* infer c t (Abs l a1 :> g)
       prove c t0 g >>= \case
         Pi _ _ :==: Pi (Var y d2 aA2) _ -> do
@@ -412,14 +421,16 @@ primitiveReduction c t p =
           --
           pure (Abs (Var y d2 aA2) (a2 :> g2))
         _ -> empty
-    a :> g1 :> g2 -> pure (a :> (g1 ::: g2))
+    a :> g1 :> g2 -> pure (a :> (g1 ::: g2)) -- aBeta-Combine
     a :> g -> do
+      -- aBeta-ConvRefl
       aA1 :==: aA2 <- prove c t g
       guard (aA1 == aA2)
       --
       pure a
-    IndN _ _ Zero a2 _ _ -> pure a2
+    IndN _ _ Zero a2 _ _ -> pure a2 -- aBeta-IndZero
     IndN x aA (Succ a1) a2 y a3 ->
+      -- aBeta-IndSucc
       pure (App RL (repoint a3 a1 y) (IndN x aA a1 a2 y a3))
     _ -> empty
 
