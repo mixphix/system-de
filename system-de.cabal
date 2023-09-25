@@ -1,0 +1,41 @@
+cabal-version:      3.4
+name:               system-de
+version:            0.0.0
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             Melanie Brown
+maintainer:         brown.m@pm.me
+category:           Language
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common settings
+  ghc-options:        -Wall -Wno-unticked-promoted-constructors
+  default-language:   GHC2021
+  default-extensions:
+    BlockArguments
+    DataKinds
+    DefaultSignatures
+    DerivingStrategies
+    LambdaCase
+    MultiWayIf
+    OverloadedRecordDot
+    OverloadedStrings
+    PatternSynonyms
+    QuasiQuotes
+    RecordWildCards
+    TypeFamilies
+    ViewPatterns
+
+executable system-de
+  import:         settings
+  main-is:        Main.hs
+  hs-source-dirs: app
+  build-depends:
+    , base  >=4.17.1.0
+    , containers
+    , control-block
+    , list1
+    , mtl
+    , text
+    , transformers
