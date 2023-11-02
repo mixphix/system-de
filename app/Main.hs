@@ -88,6 +88,15 @@ data Point
 pattern IndN :: Text -> Point -> Point -> Point -> Text -> Point -> Point
 pattern IndN x aA a1 a2 y a3 = Ind (Pi (Var x RL NN) aA) a1 a2 (y, a3)
 
+-- |
+-- @'repoint' point with name@ replaces all occurrences of
+-- the pattern @'Point' name@ in @point@ with @with@.
+--
+-- If @name@ occurs as a function argument in @point@, that argument
+-- is first safely 'repoint'ed in its result before 'repoint'ing
+-- the outer expression.
+--
+-- c.f. 'recoerce'
 repoint :: Point -> Point -> Text -> Point
 repoint point with name = case point of
   Point p | p == name -> with
@@ -157,6 +166,11 @@ pattern IndNCong ::
 pattern IndNCong x aA g1 g2 y g3 g =
   IndCong (Pi (Var x RL NN) aA) g1 g2 (y, g3) g
 
+-- |
+-- @'recoerce' coercion with name@ replaces all occurrences of
+-- the pattern @'Point' name@ in @coercion@ with @with@.
+--
+-- c.f. 'repoint'
 recoerce :: Coercion -> Point -> Text -> Coercion
 recoerce coercion with name = case coercion of
   Reflect point -> Reflect (repoint point with name)
@@ -207,9 +221,17 @@ recoerce coercion with name = case coercion of
     do (y, recoerce g3 with name)
     do recoerce g4 with name
 
--- read `ty <- point` as `point :: ty`
+-- |
+-- Type inference algorithm for System DE.
+--
+-- >>> infer @Maybe C_ Logical Star
+-- Nothing
+--
+-- >>> infer @Maybe C_ Program Star
+-- Just Star
 infer :: (MonadPlus m) => Context -> Termination -> Point -> m Point
 infer c t = \case
+  -- read `ty <- point` as `point :: ty`
   Star -> case t of
     -- T-TYPE
     Logical -> empty
@@ -287,6 +309,8 @@ infixr 8 :==:
 data Path = Point :==: Point
   deriving (Eq, Ord, Show)
 
+-- |
+-- Prove the equality of two 'Point's along a 'Path' given a 'Coercion'.
 prove :: (MonadPlus m) => Context -> Termination -> Coercion -> m Path
 prove c t = \case
   Reflect a0@(Equal t0 a b) -> do
@@ -297,7 +321,6 @@ prove c t = \case
     infer c t b .= aA
     --
     pure (a :==: b)
-  Reflect{} -> empty
   Reflex a -> infer c t a $> a :==: a -- E-Reflex
   Sym g -> prove c t g <&> \(a :==: b) -> b :==: a -- E-Sym
   g1 ::: g2 -> do
@@ -407,14 +430,12 @@ prove c t = \case
     prove c t g .= a0 :==: b0
     --
     pure (IndN x aA a1 a2 y a3 :> g :==: IndN x aA b1 b2 y b3)
-  IndCong{} -> empty
+  _ -> empty
 
 reducePrim :: (MonadPlus m) => Context -> Termination -> Point -> m Point
 reducePrim c t = liftA2 (*>) (infer c t) \case
-  App mode (Abs (Var x m _) a) b
-    | mode == m ->
-        -- aBeta-AppAbs
-        pure (repoint a b x)
+  -- aBeta-AppAbs
+  App mode (Abs (Var x m _) a) b | mode == m -> pure (repoint a b x)
   Abs l@(Var x (Mode _ t0) _) a1 :> g -> do
     -- aBeta-AbsPush
     guard (t0 <= t) <* infer c t (Abs l a1 :> g)
@@ -463,7 +484,9 @@ covalue = \case
 reduceC1 :: (MonadPlus m) => Context -> Termination -> Point -> m Point
 reduceC1 c t = \case
   App d0 a b
-    | Just () <- covalue a -> do
+    -- this is really fishy. it should probably be @m here.
+    -- that or 'value' and 'covalue' should be Point -> Bool
+    | Just () <- covalue @Maybe a -> do
         -- R-AppAbs
         reduceA1 c t a >>= \case
           Abs (Var x _ _) a1 -> pure (repoint a1 b x)
