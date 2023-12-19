@@ -5,6 +5,9 @@ import Control.Monad (MonadPlus, guard, void)
 import Data.Functor (($>), (<&>))
 import Data.Text (Text)
 
+newtype Id = Id Text
+  deriving (Eq, Ord, Show)
+
 data Relevance = Relevant | Irrelevant
   deriving (Eq, Ord, Show)
 
@@ -18,7 +21,7 @@ pattern RL :: Mode
 pattern RL = Mode Relevant Logical
 
 data Var ty = Var
-  { name :: Text
+  { name :: Id
   , mode :: Mode
   , ty :: ty
   }
@@ -33,13 +36,13 @@ data Context
 (∈) :: (Alternative m) => Text -> Context -> m (Var Point)
 name ∈ context0 = case context0 of
   C_ -> empty
-  _ :& v@(Var x _ _) | x == name -> pure v
+  _ :& v@(Var (Id x) _ _) | x == name -> pure v
   c :& _ -> name ∈ c
 
 (∉) :: (Alternative m) => Text -> Context -> m ()
 (∉) x = \case
   C_ -> pure ()
-  c :& Var y _ _ -> guard (x /= y) *> x ∉ c
+  c :& Var (Id y) _ _ -> guard (x /= y) *> x ∉ c
 
 resurrect :: Context -> Context
 resurrect = \case
@@ -50,12 +53,12 @@ resurrect = \case
 (~) = resurrect
 
 (+:) :: (MonadPlus m) => Context -> Var Point -> m Context
-c +: (Var x (Mode r t) a) = do
+c +: (Var (Id x) (Mode r t) a) = do
   -- T-ConsTm
   infer (c ~) t a .= Star
   x ∉ c
   --
-  pure (c :& Var x (Mode r t) a)
+  pure (c :& Var (Id x) (Mode r t) a)
 
 infixl 7 .=
 
@@ -80,7 +83,7 @@ data Point
   deriving (Eq, Ord, Show)
 
 pattern IndN :: Text -> Point -> Point -> Point -> Text -> Point -> Point
-pattern IndN x aA a1 a2 y a3 = Ind (Pi (Var x RL NN) aA) a1 a2 (y, a3)
+pattern IndN x aA a1 a2 y a3 = Ind (Pi (Var (Id x) RL NN) aA) a1 a2 (y, a3)
 
 -- |
 -- @'repoint' point with name@ replaces all occurrences of
@@ -94,20 +97,20 @@ pattern IndN x aA a1 a2 y a3 = Ind (Pi (Var x RL NN) aA) a1 a2 (y, a3)
 repoint :: Point -> Point -> Text -> Point
 repoint point with name = case point of
   Point p | p == name -> with
-  Pi (Var x m aA) a ->
+  Pi (Var (Id x) m aA) a ->
     if x == name
       then repoint
-        do Pi (Var (x <> name) m aA) (repoint a (Point (x <> name)) x)
+        do Pi (Var (Id do x <> name) m aA) (repoint a (Point (x <> name)) x)
         do with
         do name
-      else Pi (Var x m aA) (repoint a with name)
-  Abs (Var x m aA) a ->
+      else Pi (Var (Id x) m aA) (repoint a with name)
+  Abs (Var (Id x) m aA) a ->
     if x == name
       then repoint
-        do Abs (Var (x <> name) m aA) (repoint a (Point (x <> name)) x)
+        do Abs (Var (Id do x <> name) m aA) (repoint a (Point (x <> name)) x)
         do with
         do name
-      else Abs (Var x m aA) (repoint a with name)
+      else Abs (Var (Id x) m aA) (repoint a with name)
   App mode p0 p1 -> App mode (repoint p0 with name) (repoint p1 with name)
   Equal t p0 p1 -> Equal t (repoint p0 with name) (repoint p1 with name)
   Reify t g -> Reify t (recoerce g with name)
@@ -158,7 +161,7 @@ pattern IndNCong ::
   Coercion ->
   Coercion
 pattern IndNCong x aA g1 g2 y g3 g =
-  IndCong (Pi (Var x RL NN) aA) g1 g2 (y, g3) g
+  IndCong (Pi (Var (Id x) RL NN) aA) g1 g2 (y, g3) g
 
 -- |
 -- @'recoerce' coercion with name@ replaces all occurrences of
@@ -171,19 +174,25 @@ recoerce coercion with name = case coercion of
   Reflex point -> Reflex (repoint point with name)
   Sym g -> Sym (recoerce g with name)
   g1 ::: g2 -> recoerce g1 with name ::: recoerce g2 with name
-  PiCong (Var x m g1) g2 ->
+  PiCong (Var (Id x) m g1) g2 ->
     if x == name
       then recoerce
-        do PiCong (Var (x <> name) m g1) (recoerce g1 (Point (x <> name)) x)
+        do
+          PiCong
+            do Var (Id do x <> name) m g1
+            do recoerce g1 (Point (x <> name)) x
         do with
         do name
-      else PiCong (Var x m (recoerce g1 with name)) (recoerce g2 with name)
-  AbsCong (Var x m aA) g
+      else PiCong (Var (Id x) m (recoerce g1 with name)) (recoerce g2 with name)
+  AbsCong (Var (Id x) m aA) g
     | x == name -> recoerce
-        do AbsCong (Var (x <> name) m aA) (recoerce g (Point (x <> name)) x)
+        do
+          AbsCong
+            do Var (Id do x <> name) m aA
+            do recoerce g (Point (x <> name)) x
         do with
         do name
-    | otherwise -> AbsCong (Var x m aA) (recoerce g with name)
+    | otherwise -> AbsCong (Var (Id x) m aA) (recoerce g with name)
   AppCong g1 g2 g -> AppCong
     do recoerce g1 with name
     do recoerce g2 with name
@@ -255,7 +264,7 @@ infer c t = \case
     -- T-App
     tyB <- infer c t b
     case tyB of
-      Pi (Var x m aA) bB -> do
+      Pi (Var (Id x) m aA) bB -> do
         guard (m <= mode)
         infer c t a .= aA
         --
@@ -287,11 +296,11 @@ infer c t = \case
     pure NN
   IndN x aA a1 a2 y a3 -> do
     -- T-Ind
-    let x_ ^: n = Var x_ RL n
+    let x_ ^: n = Var (Id x_) RL n
     infer (c ~) Logical (Pi (x ^: NN) aA) .= Star
     infer c Logical a1 .= NN
     infer c Logical a2 .= repoint aA Zero x
-    c' <- c +: Var y RL NN
+    c' <- c +: Var (Id y) RL NN
     let ayx = repoint aA (Point y) x
         asyx = repoint aA (Succ $ Point y) x
     infer c' Logical a3 .= Pi (x ^: ayx) asyx
@@ -325,16 +334,17 @@ prove c t = \case
     guard (b1 == b2)
     --
     pure (x :==: y)
-  PiCong (Var x (Mode r0 t0) g1) g2 -> do
+  PiCong (Var (Id x) (Mode r0 t0) g1) g2 -> do
     -- E-PiCong
     a1 :==: a2 <- prove c t g1
-    c' <- c +: Var x (Mode Relevant t0) a1
+    c' <- c +: Var (Id x) (Mode Relevant t0) a1
     b1 :==: b2 <- prove c' t g2
-    infer c t (Pi (Var x (Mode r0 t0) a1) b1) .= Star
-    infer c t (Pi (Var x (Mode r0 t0) a1) b2) .= Star
+    infer c t (Pi (Var (Id x) (Mode r0 t0) a1) b1) .= Star
+    infer c t (Pi (Var (Id x) (Mode r0 t0) a1) b2) .= Star
     let b3 = repoint b2 (Point x :> Sym g1) x
     --
-    pure (Pi (Var x (Mode r0 t0) a1) b1 :==: Pi (Var x (Mode r0 t0) a2) b3)
+    pure do
+      Pi (Var (Id x) (Mode r0 t0) a1) b1 :==: Pi (Var (Id x) (Mode r0 t0) a2) b3
   AbsCong l@(Var _ (Mode _ t0) aA) g -> do
     -- E-AbsCong
     infer (c ~) t0 aA .= Star
@@ -386,7 +396,7 @@ prove c t = \case
     -- E-PiSnd
     guard (t0 <= t)
     prove c t0 g >>= \case
-      Pi (Var x1 (Mode _ t1) aA1) bB1 :==: Pi (Var x2 _ aA2) bB2 -> do
+      Pi (Var (Id x1) (Mode _ t1) aA1) bB1 :==: Pi (Var (Id x2) _ aA2) bB2 -> do
         a1 :==: a2 <- prove c t1 g1
         infer c t1 a2 .= aA2
         prove c t1 g2 .= aA2 :==: aA1
@@ -415,10 +425,10 @@ prove c t = \case
     pure (Succ a :==: Succ b)
   IndNCong x aA g1 g2 y g3 g -> do
     -- E-IndCong
-    infer (c ~) Logical (Pi (Var x RL NN) aA) .= Star
+    infer (c ~) Logical (Pi (Var (Id x) RL NN) aA) .= Star
     a1 :==: b1 <- prove c Logical g1
     a2 :==: b2 <- prove c Logical g2
-    c' <- c +: Var y RL NN
+    c' <- c +: Var (Id y) RL NN
     a3 :==: b3 <- prove c' Logical g3
     a0 <- infer c t (IndN x aA a1 a2 y a3)
     b0 <- infer c t (IndN x aA b1 b2 y b3)
@@ -430,16 +440,16 @@ prove c t = \case
 reducePrim :: (MonadPlus m) => Context -> Termination -> Point -> m Point
 reducePrim c t = liftA2 (*>) (infer c t) \case
   -- aBeta-AppAbs
-  App mode (Abs (Var x m _) a) b | mode == m -> pure (repoint a b x)
-  Abs l@(Var x (Mode _ t0) _) a1 :> g -> do
+  App mode (Abs (Var (Id x) m _) a) b | mode == m -> pure (repoint a b x)
+  Abs l@(Var (Id x) (Mode _ t0) _) a1 :> g -> do
     -- aBeta-AbsPush
     guard (t0 <= t) <* infer c t (Abs l a1 :> g)
     prove c t0 g >>= \case
-      Pi _ _ :==: Pi (Var y d2 aA2) _ -> do
+      Pi _ _ :==: Pi (Var (Id y) d2 aA2) _ -> do
         let a2 = repoint a1 (Point x :> Sym (Pifst t0 g)) x
         let g2 = Pisnd t0 g (Reflex (Point x)) (Sym (Pifst t0 g))
         --
-        pure (Abs (Var y d2 aA2) (a2 :> g2))
+        pure (Abs (Var (Id y) d2 aA2) (a2 :> g2))
       _ -> empty
   a :> g1 :> g2 -> pure (a :> (g1 ::: g2)) -- aBeta-Combine
   a :> g -> do
@@ -484,7 +494,7 @@ reduceC1 c t = \case
     | Just () <- covalue @Maybe a -> do
         -- R-AppAbs
         reduceA1 c t a >>= \case
-          Abs (Var x _ _) a1 -> pure (repoint a1 b x)
+          Abs (Var (Id x) _ _) a1 -> pure (repoint a1 b x)
           _ -> empty
     | otherwise -> do
         -- R-App
@@ -512,7 +522,7 @@ reduceC1 c t = \case
 -- > _ :: Γ |- a ⇀ b
 reduceA1 :: (MonadPlus m) => Context -> Termination -> Point -> m Point
 reduceA1 c t = \case
-  l@(Abs (Var x (Mode r0 t0) _) a1 :> g) -> do
+  l@(Abs (Var (Id x) (Mode r0 t0) _) a1 :> g) -> do
     -- CR-AbsPush
     guard (t0 <= t)
     void (infer c t l) -- .= A
@@ -521,7 +531,7 @@ reduceA1 c t = \case
         let a2 = repoint a1 (Point x :> Sym (Pifst t0 g)) x
             g2 = Pisnd t0 g (Reflex (Point x)) (Sym (Pifst t0 g))
         --
-        pure (Abs (Var x (Mode r0 t0) aA2) a2 :> g2)
+        pure (Abs (Var (Id x) (Mode r0 t0) aA2) a2 :> g2)
       _ -> empty
   a :> g1 :> g2 -> pure (a :> (g1 ::: g2)) -- CR-Combine
   a :> g
