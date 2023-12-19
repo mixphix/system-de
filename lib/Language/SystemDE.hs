@@ -549,7 +549,7 @@ reduceC1 c t = \case
   App d0 a b
     | covalue a -> do
         -- R-AppAbs
-        reduceA1 c t a >>= \case
+        reduceA c t a >>= \case
           Abs (Var (Id x) _ _) a1 -> pure (repoint a1 b x)
           _ -> inferenceError do ApplicationPatternFailure a b
     | otherwise -> do
@@ -560,18 +560,39 @@ reduceC1 c t = \case
     -- R-Conv
     a2 <- reduceC1 c t a1
     pure (a2 :> g)
-  ind@(IndN x aA a1 a2 y a3) -> do
-    -- R-Ind
-    b1 <- reduceC1 c Logical a1
-    bB0 <- infer c t ind
-    bB1 <- infer c t (IndN x aA b1 a2 y a3)
-    -- Proof introduction,
-    let g = Reflex bB1 :: Coercion
-    -- because reduction is confluent and preserves
-    -- Reflex bB0 : bB0 :==: bB0 ~> Reflex bB1 : bB1 :==: bB1.
-    prove (c ~) t g .== bB1 :==: bB0
-    pure (IndN x aA b1 a2 y a3 :> g)
+  ind@(IndN x aA a1 a2 y a3)
+    | covalue a1
+    , Just Zero <- reduceA c Logical a1 -> do
+        -- R-IndZero
+        _bB0 <- infer c t ind
+        bB1 <- infer c t (IndN x aA Zero a2 y a3)
+        let g = Reflex bB1 :: Coercion
+        void do prove (c ~) t g -- .== bB1 :==: bB0
+        pure (a2 :> g)
+    | covalue a1
+    , Just (Succ a1') <- reduceA c Logical a1 -> do
+        -- R-IndSucc
+        _bB0 <- infer c t ind
+        bB1 <- infer c t (IndN x aA (Succ a1') a2 y a3)
+        let g = Reflex bB1 :: Coercion
+        void do prove (c ~) t g -- .== bB1 :==: bB0
+        pure (App RL (repoint a3 a1' y) (IndN x aA a1' a2 y a3) :> g)
+    | otherwise -> do
+        -- R-Ind
+        b1 <- reduceC1 c Logical a1
+        _bB0 <- infer c t ind
+        bB1 <- infer c t (IndN x aA b1 a2 y a3)
+        let g = Reflex bB1 :: Coercion
+        void do prove (c ~) t g -- .== bB1 :==: bB0
+        pure (IndN x aA b1 a2 y a3 :> g)
   p -> pure p
+
+reduceC :: (MonadInference m) => Context -> Termination -> Point -> m Point
+reduceC c t p = do
+  p' <- reduceC1 c t p
+  if p == p'
+    then pure p
+    else reduceC c t p
 
 -- | Administrative reduction
 --
@@ -597,3 +618,10 @@ reduceA1 c t = \case
     | Just b <- reduceA1 c t a -> pure (b :> g)
   Succ a1 -> Succ <$> reduceA1 c t a1 -- CR-Succ
   p -> pure p
+
+reduceA :: (MonadInference m) => Context -> Termination -> Point -> m Point
+reduceA c t p = do
+  p' <- reduceA1 c t p
+  if p == p'
+    then pure p
+    else reduceA c t p'
