@@ -1,4 +1,4 @@
-cabal-version:      3.4
+cabal-version:      3.0
 name:               system-de
 version:            0.0.0
 license:            BSD-3-Clause
@@ -27,15 +27,17 @@ common settings
     TypeFamilies
     ViewPatterns
 
-executable system-de
+library
   import:         settings
-  main-is:        Main.hs
-  hs-source-dirs: app
+  hs-source-dirs: lib
   build-depends:
-    , base  >=4.17.1.0
+    , base  >=4.18
     , containers
     , control-block
     , list1
     , mtl
     , text
     , transformers
+
+  exposed-modules:
+    Language.SystemDE

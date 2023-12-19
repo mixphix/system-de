@@ -1,15 +1,9 @@
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-
-{-# HLINT ignore "Redundant bracket" #-}
-module Main where
+module Language.SystemDE where
 
 import Control.Applicative (Alternative (empty))
 import Control.Monad (MonadPlus, guard, void)
 import Data.Functor (($>), (<&>))
 import Data.Text (Text)
-
-main :: IO ()
-main = putStrLn "Hello, Haskell!"
 
 data Relevance = Relevant | Irrelevant
   deriving (Eq, Ord, Show)
@@ -203,7 +197,8 @@ recoerce coercion with name = case coercion of
   ReifyCong t g1 g2 ->
     ReifyCong t (recoerce g1 with name) (recoerce g2 with name)
   Pifst t g -> Pifst t (recoerce g with name)
-  Pisnd t g g1 g2 -> (Pisnd t)
+  Pisnd t g g1 g2 -> Pisnd
+    do t
     do recoerce g with name
     do recoerce g1 with name
     do recoerce g2 with name
@@ -333,7 +328,7 @@ prove c t = \case
   PiCong (Var x (Mode r0 t0) g1) g2 -> do
     -- E-PiCong
     a1 :==: a2 <- prove c t g1
-    c' <- c +: (Var x (Mode Relevant t0) a1)
+    c' <- c +: Var x (Mode Relevant t0) a1
     b1 :==: b2 <- prove c' t g2
     infer c t (Pi (Var x (Mode r0 t0) a1) b1) .= Star
     infer c t (Pi (Var x (Mode r0 t0) a1) b2) .= Star
